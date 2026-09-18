@@ -1,0 +1,367 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Mini Drawing App</title>
+  <style>
+    html,body { height:100%; margin:0; }
+    #app { display:flex; height:100vh; gap:12px; padding:12px; box-sizing:border-box; }
+    .left { flex:1; display:flex; flex-direction:column; }
+    canvas { flex:1; border:1px solid #ccc; touch-action: none; background: white; }
+    .controls { width:260px; display:flex; flex-direction:column; gap:8px; }
+    .row { display:flex; gap:8px; align-items:center; }
+    button { padding:6px 8px; }
+    input[type="file"] { display:none; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="left">
+      <canvas id="c"></canvas>
+      <div class="row" style="padding-top:8px;">
+        <button id="undoBtn">Undo</button>
+        <button id="clearBtn">Clear</button>
+        <button id="replayBtn">Replay</button>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="row"><label>Tool:</label>
+        <select id="toolSelect">
+          <option value="brush">Brush</option>
+          <option value="eraser">Eraser</option>
+        </select>
+      </div>
+
+      <div class="row"><label>Color:</label>
+        <input id="color" type="color" value="#000000" />
+      </div>
+
+      <div class="row"><label>Size:</label>
+        <input id="size" type="range" min="1" max="80" value="8" />
+        <span id="sizeVal">8</span>
+      </div>
+
+      <div class="row">
+        <button id="saveBtn">Save (JSON)</button>
+        <button id="loadBtn">Load</button>
+        <input id="fileInput" type="file" accept=".json" />
+      </div>
+
+      <div style="margin-top:16px;">
+        <strong>Predefined stroke loader (example):</strong>
+        <div class="row">
+          <button id="loadExample">Load Example Strokes</button>
+        </div>
+      </div>
+
+      <div style="font-size:12px; color:#666; margin-top:8px;">
+        Notes: pointer input supported. Change color/size while drawing to change mid-stroke.
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function(){
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d', { alpha: false });
+
+    // UI elements
+    const colorInput = document.getElementById('color');
+    const sizeInput = document.getElementById('size');
+    const sizeVal = document.getElementById('sizeVal');
+    const toolSelect = document.getElementById('toolSelect');
+    const undoBtn = document.getElementById('undoBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const saveBtn = document.getElementById('saveBtn');
+    const loadBtn = document.getElementById('loadBtn');
+    const fileInput = document.getElementById('fileInput');
+    const replayBtn = document.getElementById('replayBtn');
+    const loadExample = document.getElementById('loadExample');
+
+    // Data model
+    let strokes = []; // array of strokes
+    let undone = []; // for redo if wanted
+    let currentStroke = null;
+    let isDrawing = false;
+
+    // device pixel ratio handling
+    function resizeCanvasToDisplaySize() {
+      const dpr = window.devicePixelRatio || 1;
+      const width = canvas.clientWidth || canvas.offsetWidth || 800;
+      const height = canvas.clientHeight || canvas.offsetHeight || 600;
+      canvas.width = Math.floor(width * dpr);
+      canvas.height = Math.floor(height * dpr);
+      canvas.style.width = width + "px";
+      canvas.style.height = height + "px";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // scale drawing to CSS pixels
+    }
+
+    function fitCanvas() {
+      // make canvas fill parent
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
+      resizeCanvasToDisplaySize();
+      render();
+    }
+
+    window.addEventListener('resize', () => { resizeCanvasToDisplaySize(); render(); });
+    fitCanvas();
+
+    // Helpers
+    function posFromEvent(evt) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: (evt.clientX - rect.left),
+        y: (evt.clientY - rect.top),
+        pressure: evt.pressure === undefined ? 0.5 : evt.pressure
+      };
+    }
+
+    function startStroke(evt) {
+      const p = posFromEvent(evt);
+      isDrawing = true;
+      currentStroke = {
+        id: Date.now(),
+        tool: toolSelect.value, // 'brush' or 'eraser'
+        points: [],
+        createdAt: new Date().toISOString()
+      };
+      // push first point with current attributes
+      const pt = {
+        x: p.x,
+        y: p.y,
+        pressure: p.pressure,
+        color: colorInput.value,
+        size: Number(sizeInput.value),
+        t: Date.now()
+      };
+      currentStroke.points.push(pt);
+      strokes.push(currentStroke);
+      // clear undone stack
+      undone = [];
+      render(); // optional immediate
+    }
+
+    function moveStroke(evt) {
+      if (!isDrawing || !currentStroke) return;
+      evt.preventDefault();
+      const p = posFromEvent(evt);
+      const pt = {
+        x: p.x,
+        y: p.y,
+        pressure: p.pressure,
+        color: colorInput.value,
+        size: Number(sizeInput.value),
+        t: Date.now()
+      };
+      currentStroke.points.push(pt);
+      // draw incremental segment for speed
+      drawLastSegment(currentStroke);
+    }
+
+    function endStroke(evt) {
+      if (!isDrawing) return;
+      isDrawing = false;
+      currentStroke = null;
+      render(); // finalize
+    }
+
+    // pointer events
+    canvas.addEventListener('pointerdown', (e) => {
+      canvas.setPointerCapture(e.pointerId);
+      startStroke(e);
+    });
+    canvas.addEventListener('pointermove', moveStroke);
+    canvas.addEventListener('pointerup', (e) => {
+      canvas.releasePointerCapture(e.pointerId);
+      endStroke(e);
+    });
+    canvas.addEventListener('pointercancel', endStroke);
+    canvas.addEventListener('pointerout', (e) => {
+      // if finger leaves canvas, end stroke (optional)
+    });
+
+    // drawing routines
+    function clearCanvasBackground() {
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0,0,canvas.width, canvas.height);
+    }
+
+    function render() {
+      // full redraw
+      clearCanvasBackground();
+      for (const s of strokes) drawStroke(s);
+    }
+
+    function drawStroke(stroke, uptoIndex=undefined) {
+      if (!stroke.points || stroke.points.length === 0) return;
+      // set composite operation for eraser strokes
+      if (stroke.tool === 'eraser') {
+        ctx.globalCompositeOperation = 'destination-out';
+      } else {
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      // draw segments between successive points
+      const N = uptoIndex === undefined ? stroke.points.length : Math.min(uptoIndex, stroke.points.length);
+      if (N === 1) {
+        const p = stroke.points[0];
+        ctx.beginPath();
+        ctx.fillStyle = stroke.tool === 'eraser' ? 'rgba(0,0,0,1)' : p.color;
+        ctx.arc(p.x, p.y, p.size/2, 0, Math.PI*2);
+        ctx.fill();
+        return;
+      }
+
+      for (let i = 0; i < N - 1; i++) {
+        const p0 = stroke.points[i];
+        const p1 = stroke.points[i+1];
+        const avgSize = (p0.size + p1.size) / 2;
+        ctx.lineWidth = Math.max(1, avgSize);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        // for variable color, choose p1 color
+        ctx.strokeStyle = stroke.tool === 'eraser' ? 'rgba(0,0,0,1)' : (p1.color || p0.color);
+        ctx.beginPath();
+        ctx.moveTo(p0.x, p0.y);
+        ctx.lineTo(p1.x, p1.y);
+        ctx.stroke();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // incremental draw of last segment to keep UI snappy
+    function drawLastSegment(stroke) {
+      // re-render only last stroke (cheap)
+      // clear only area around last segment is possible, but simpler: full render for clarity
+      render();
+    }
+
+    // UI bindings
+    sizeInput.addEventListener('input', () => sizeVal.textContent = sizeInput.value);
+
+    undoBtn.addEventListener('click', () => {
+      if (!strokes.length) return;
+      undone.push(strokes.pop());
+      render();
+    });
+
+    clearBtn.addEventListener('click', () => {
+      if (!confirm('Clear the canvas?')) return;
+      strokes = [];
+      undone = [];
+      render();
+    });
+
+    saveBtn.addEventListener('click', () => {
+      const data = JSON.stringify({ strokes }, null, 2);
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'drawing.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    });
+
+    loadBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const parsed = JSON.parse(ev.target.result);
+          if (parsed && parsed.strokes) {
+            strokes = parsed.strokes;
+            render();
+          } else {
+            alert('Invalid file format');
+          }
+        } catch (err) {
+          alert('Error parsing file: ' + err.message);
+        }
+      };
+      reader.readAsText(f);
+      e.target.value = '';
+    });
+
+    // replay / animate drawing (useful for pre-defined strokes)
+    replayBtn.addEventListener('click', () => {
+      // simple replay by clearing and drawing strokes incrementally
+      let replayStrokes = JSON.parse(JSON.stringify(strokes)); // clone
+      clearCanvasBackground();
+      let sIndex = 0;
+      let pIndex = 0;
+      const interval = 12; // ms per point (tweak)
+      const timer = setInterval(() => {
+        if (sIndex >= replayStrokes.length) {
+          clearInterval(timer);
+          return;
+        }
+        const s = replayStrokes[sIndex];
+        pIndex++;
+        // render all previous strokes fully
+        clearCanvasBackground();
+        for (let i = 0; i < sIndex; i++) drawStroke(replayStrokes[i]);
+        // draw current stroke up to pIndex
+        drawStroke(s, pIndex);
+        if (pIndex >= s.points.length) { sIndex++; pIndex = 0; }
+      }, interval);
+    });
+
+    // Example: load predefined strokes (demonstration of how to import external stroke data)
+    loadExample.addEventListener('click', () => {
+      const example = [
+        {
+          id: 1,
+          tool: 'brush',
+          points: [
+            {x:100,y:100,size:18,color:'#d22',pressure:0.5},
+            {x:140,y:120,size:20,color:'#d22',pressure:0.5},
+            {x:180,y:130,size:22,color:'#d22',pressure:0.5},
+            {x:220,y:160,size:12,color:'#2a2',pressure:0.5},
+            {x:260,y:200,size:8,color:'#2a2',pressure:0.5}
+          ],
+          createdAt: new Date().toISOString()
+        },
+        {
+          id: 2,
+          tool: 'eraser',
+          points: [
+            {x:150,y:150,size:30,color:'#fff',pressure:0.5},
+            {x:170,y:170,size:30,color:'#fff',pressure:0.5},
+            {x:200,y:180,size:30,color:'#fff',pressure:0.5}
+          ],
+          createdAt: new Date().toISOString()
+        }
+      ];
+      // append and render
+      strokes = strokes.concat(example);
+      render();
+    });
+
+    // initial render
+    render();
+
+    // Expose API for embedding: window.drawingApp.loadStrokes([...])
+    window.drawingApp = {
+      loadStrokes(arr, {append=true} = {}) {
+        // arr should be array of strokes matching the model
+        if (!Array.isArray(arr)) return;
+        if (append) strokes = strokes.concat(arr);
+        else strokes = arr;
+        render();
+      },
+      getStrokes() { return JSON.parse(JSON.stringify(strokes)); },
+      clear() { strokes = []; render(); },
+      replay() { replayBtn.click(); }
+    };
+
+  })();
+  </script>
+</body>
+</html>

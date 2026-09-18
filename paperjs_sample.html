@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>PaperJS Shapes</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.15/paper-full.min.js"></script>
+</head>
+<body>
+  <canvas id="myCanvas" resize></canvas>
+
+  <script>
+    // Entire Paper.js JavaScript code goes here ↓
+    paper.setup("myCanvas");
+
+    let baseRaster;
+    let currentPath = null;
+    let shapes = [];
+
+    function createBackground() {
+      let bg = new paper.Path.Circle({
+        center: paper.view.center,
+        radius: 200,
+        fillColor: 'orange'
+      });
+      let bg2 = new paper.Path.Rectangle({
+        point: [100, 100],
+        size: [200, 200],
+        fillColor: 'rgb(50,150,220)'
+      });
+
+      baseRaster = new paper.Raster(paper.project.activeLayer);
+      baseRaster.sendToBack();
+
+      bg.remove();
+      bg2.remove();
+    }
+    createBackground();
+
+    paper.view.onMouseDown = (event) => {
+      currentPath = new paper.Path({
+        strokeColor: 'lime',
+        strokeWidth: 2
+      });
+      currentPath.add(event.point);
+    };
+
+    paper.view.onMouseDrag = (event) => {
+      if (!currentPath) return;
+      currentPath.add(event.point);
+    };
+
+    paper.view.onMouseUp = () => {
+      if (!currentPath) return;
+
+      currentPath.simplify(2);
+      if (currentPath.segments.length < 3) {
+        currentPath.remove();
+        currentPath = null;
+        return;
+      }
+
+      currentPath.closed = true;
+      currentPath.strokeColor = "white";
+      currentPath.fillColor = new paper.Color(1, 1, 1, 0.1);
+
+      shapes.push(currentPath);
+      currentPath = null;
+    };
+
+    paper.view.onClick = (event) => {
+      const hit = paper.project.hitTest(event.point, {
+        fill: true,
+        stroke: true,
+        tolerance: 5
+      });
+
+      if (!hit || !shapes.includes(hit.item)) return;
+
+      const shape = hit.item;
+
+      shapes.forEach(s => s.strokeColor = 'white');
+      shape.strokeColor = 'yellow';
+
+      computeAverageRGB(shape);
+    };
+
+    function computeAverageRGB(shape) {
+      const bounds = shape.bounds;
+      baseRaster.lock();
+
+      let r = 0, g = 0, b = 0, count = 0;
+
+      for (let x = bounds.left; x < bounds.right; x++) {
+        for (let y = bounds.top; y < bounds.bottom; y++) {
+          const pt = new paper.Point(x, y);
+          if (!shape.contains(pt)) continue;
+
+          const c = baseRaster.getPixel(pt);
+          r += c.red * 255;
+          g += c.green * 255;
+          b += c.blue * 255;
+          count++;
+        }
+      }
+
+      baseRaster.unlock();
+
+      if (count === 0) {
+        alert("Shape contains no pixels.");
+        return;
+      }
+
+      alert(
+        `Average RGB:\nR:${(r/count).toFixed(1)}, G:${(g/count).toFixed(1)}, B:${(b/count).toFixed(1)}`
+      );
+    }
+  </script>
+</body>
+</html>
