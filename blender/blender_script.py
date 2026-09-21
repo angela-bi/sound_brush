@@ -1,22 +1,45 @@
+import bpy
+import sys
+import json
+import asyncio
+
+# add project folder so blender_server can be imported as a real module
+SERVER_DIR = "/Users/angelabi/UIUC/sound_brush/blender"
+if SERVER_DIR not in sys.path:
+    sys.path.append(SERVER_DIR)
+
+import blender_server as _server
+if _server._loop is None:
+    _server.register()
+    print(">>> server started")
+else:
+    print(">>> server already running")
+
+print(">>> [1] basic imports done")
+
+sys.path.append("/Users/angelabi/.local/lib/python3.11/site-packages")
+print(">>> [2] sys.path updated")
+
 import sounddevice as sd
 import numpy as np
-import bpy
+print(">>> [3] sounddevice and numpy imported")
+print(sd.query_devices())
 
-import sys
-sys.path.append("/Users/angelabi/.local/lib/python3.11/site-packages") # replace with own path
-import cv2
+# -------------------------
+# Globals
+# -------------------------
+_audio_stream = None
+_current_level = 0.0
+BRUSH_MIN = 1
+BRUSH_MAX = 200
+_smoothed_level = 0.0
+SMOOTH_FACTOR = 0.15
 
-##################
-# SOURCES
-##################
-# https://github.com/F1dg3tXD/MAD/blob/main/MAD_OSX/mad.py
-# https://github.com/CGArtPython/blender_plus_python/blob/main/add-ons/simple_custom_panel/simple_custom_panel.py
+print(">>> [4] globals set")
 
-
-##################
-# HELPER FUNCTIONS 
-##################
-
+# -------------------------
+# Helpers
+# -------------------------
 def get_microphone_items(self, context):
     items = []
     for i, device in enumerate(sd.query_devices()):
@@ -25,261 +48,207 @@ def get_microphone_items(self, context):
             items.append((label, device["name"], ""))
     return items
 
-# todo: implement camera source selection for opencv
+def normalize_rms(audio_block, scale=1.0):
+    rms = float(np.sqrt(np.mean(audio_block ** 2)))
+    return min(rms * scale, 1.0)
 
-def list_gp_layers(obj=None):
-    if obj is None:
-        obj = bpy.context.active_object
-    if not obj or obj.type != 'GPENCIL':
-        print("No active Grease Pencil object selected.")
-        return
-    gp_data = obj.data
-    print(f"Grease Pencil layers in '{obj.name}':")
-    for i, layer in enumerate(gp_data.layers):
-        print(f"  Layer {i}: {layer.info}")
-        print(f"    - Visible: {layer.hide is False}")
-        print(f"    - Locked: {layer.lock}")
-        print(f"    - Frames: {[frame.frame_number for frame in layer.frames]}")
-        
-def normalize(array):
-    # returns array but normalized
-    return (array - np.min(array)) / (np.max(array) - np.min(array))
-        
-def safe_sample(array):
-    # returns a random sample of the array used
-    return float(np.random.choice(array))
+def lerp(a, b, t):
+    return a + (b - a) * t
 
-def change_rgb(bool_tuple, color_tuple, new_val):
-    # takes in a tuple of booleans (r,g,b) and returns a tuple with the values marked "true" changed
-    red, green, blue = bool_tuple
-    r, g, b = color_tuple
+def broadcast_level(level: float):
+    """Look up blender_server from sys.modules — never import it directly."""
+    try:
+        server = sys.modules.get("blender_server")
+        if server is None:
+            print(">>> broadcast skipped: blender_server not in sys.modules (run it first)")
+            return
+        if not server._clients:
+            print(">>> broadcast skipped: no browser clients connected")
+            return
+        if server._loop is None:
+            print(">>> broadcast skipped: server loop is None")
+            return
+        brush = bpy.data.brushes.get("Pencil")
+        brush_size = brush.size if brush else 0
+        scale = bpy.context.scene.audio_rig.volume_scale if hasattr(bpy.context.scene, "audio_rig") else 1.0
+        payload = json.dumps({
+            "type": "level",
+            "level": round(level, 4),
+            "brush_size": brush_size,
+            "sensitivity": round(float(scale), 2)
+        })
+        asyncio.run_coroutine_threadsafe(server._broadcast(payload), server._loop)
+        print(f">>> broadcast sent: level={round(level,4)} brush={brush_size}px")
+    except Exception as e:
+        print(f">>> Broadcast error: {e}")
 
-    new_val = max(0.0, min(1.0, new_val))
-    if red:
-        r = new_val
-    if green:
-        g = new_val
-    if blue:
-        b = new_val
+# -------------------------
+# Audio callback (background thread)
+# -------------------------
+def audio_callback(indata, frames, time, status):
+    global _current_level
+    if status:
+        print(f">>> audio status warning: {status}")
+    scene = bpy.context.scene
+    scale = scene.audio_rig.volume_scale if hasattr(scene, "audio_rig") else 1.0
+    _current_level = normalize_rms(indata, scale=float(scale) * 10)
 
-    new_color = (r, g, b)
-    print("old:", color_tuple, "→ new:", new_color)
-    return new_color
+# -------------------------
+# Blender timer (main thread)
+# -------------------------
+def update_brush_from_audio():
+    global _smoothed_level
+
+    if _audio_stream is None or not _audio_stream.active:
+        print(">>> timer: stream gone, stopping")
+        return None
+
+    _smoothed_level = lerp(_smoothed_level, _current_level, SMOOTH_FACTOR)
+    new_size = int(BRUSH_MIN + _smoothed_level * (BRUSH_MAX - BRUSH_MIN))
+
+    brush = bpy.data.brushes.get("Pencil")
+    if brush:
+        brush.size = new_size
+        print(f">>> brush size set to {new_size}px (level={_current_level:.3f})")
+    else:
+        print(">>> WARNING: brush 'Pencil' not found — check your brush name!")
+
+    broadcast_level(_smoothed_level)
+    return 0.05
+
+# -------------------------
+# Operators
+# -------------------------
+class BRUSH_AUDIO_START_OT(bpy.types.Operator):
+    bl_idname = "brush.audio_start"
+    bl_label = "Start Audio Mapping"
+    bl_description = "Begin continuous audio → brush size mapping"
+
+    def execute(self, context):
+        global _audio_stream
+        print(">>> START operator called")
+
+        if _audio_stream is not None and _audio_stream.active:
+            self.report({'WARNING'}, "Audio mapping already running")
+            return {'CANCELLED'}
+
+        scene = context.scene
+        mic_label = scene.audio_rig.mic_list
+        print(f">>> mic: {mic_label}")
+        device_index = int(mic_label.split(":")[0]) if mic_label else None
+
+        try:
+            _audio_stream = sd.InputStream(
+                device=device_index,
+                channels=1,
+                samplerate=44100,
+                blocksize=2048,
+                callback=audio_callback,
+            )
+            _audio_stream.start()
+            print(f">>> stream active: {_audio_stream.active}")
+            bpy.app.timers.register(update_brush_from_audio)
+            print(">>> timer registered")
+            self.report({'INFO'}, "Audio mapping started")
+        except Exception as e:
+            print(f">>> ERROR: {e}")
+            self.report({'ERROR'}, f"Could not start audio stream: {e}")
+            return {'CANCELLED'}
+
+        return {'FINISHED'}
 
 
-##################
-# SETTINGS/OPTION CLASSES
-##################
+class BRUSH_AUDIO_STOP_OT(bpy.types.Operator):
+    bl_idname = "brush.audio_stop"
+    bl_label = "Stop Audio Mapping"
+    bl_description = "Stop continuous audio → brush size mapping"
 
-class InputMappingSettings(bpy.types.PropertyGroup):
-    input_source: bpy.props.EnumProperty(
-        name="Input Source",
-        description="Choose input type",
-        items=[
-            ('AUDIO', "Audio", "Use microphone input"),
-            ('CAMERA', "Camera", "Use webcam input"),
-        ],
-        default='AUDIO'
-    )
-    
-class OutputMappingSettings(bpy.types.PropertyGroup):
-    output_source: bpy.props.EnumProperty(
-        name="Output Source",
-        description="Choose output type",
-        items=[
-            ('COLOR', "Brush Color", "Change brush color"),
-            ('SIZE', "Brush Size", "Change brush size"),
-        ],
-        default='COLOR'
-    )
+    def execute(self, context):
+        global _audio_stream
+        print(">>> STOP operator called")
 
+        if _audio_stream is None or not _audio_stream.active:
+            self.report({'WARNING'}, "Audio mapping is not running")
+            return {'CANCELLED'}
+
+        _audio_stream.stop()
+        _audio_stream.close()
+        _audio_stream = None
+        self.report({'INFO'}, "Audio mapping stopped")
+        return {'FINISHED'}
+
+# -------------------------
+# Settings
+# -------------------------
 class AudioRigSettings(bpy.types.PropertyGroup):
     mic_list: bpy.props.EnumProperty(
         name="Microphone",
         description="Select input device",
         items=get_microphone_items
     )
-    volume_scale: bpy.props.FloatProperty(name="Volume to Value Scale", default=1.0)
-    # not implemented yet
-    recording_length: bpy.props.FloatProperty(name="Recording Length (s)", default=1.0, min=0.0, max=3.0)
-    # make more ways to interact with input data
-
-
-# property group for selecting color channel
-checkboxes = 3
-checkbox_names = [ "Red", "Green", "Blue"]
-class color_channel_settings(bpy.types.PropertyGroup):
-    channel_list: bpy.props.BoolVectorProperty(
-        name="Channels",
-        description="Select color channels",
-        size=checkboxes,
-        default = (False,) * checkboxes
+    volume_scale: bpy.props.FloatProperty(
+        name="Sensitivity",
+        description="Higher = more reactive to quiet sounds",
+        default=1.0,
+        min=0.1,
+        max=10.0
     )
-    
 
-##################
-# OPERATORS
-##################
+# -------------------------
+# Panel
+# -------------------------
+class VIEW3D_PT_audio_brush(bpy.types.Panel):
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Audio Brush"
+    bl_label = "Audio → Brush Size"
 
-class BRUSH_MAPPING_OT(bpy.types.Operator):
-    bl_idname = "brush.mapping_operator"
-    bl_label = "Mapping Operator"
-    bl_description = "Maps selected input to output"
-    bl_options = {'REGISTER', 'UNDO'}
-    
-    def execute(self, context):
+    def draw(self, context):
         layout = self.layout
-        scene = context.scene
-        input_mapping = scene.input_mapping
-        output_mapping = scene.output_mapping
-        # these contain the input and output the user has selected
-        color_channel = scene.color_channel
-        audio_rig = scene.audio_rig
-        
-        # current operators modify the brush
-        brush = bpy.data.brushes.get("Pencil") # brush should be a choice as well...
-        
-        if input_mapping.input_source == "AUDIO":
-            try:
-                duration = 1
-                sample_rate = 44100
-                audio = sd.rec(int(duration * sample_rate), samplerate=sample_rate, channels=1)
-                sd.wait()
-                audio = np.array(audio).flatten()
-                print('audio:', audio)
-                normalized_audio = normalize(audio)
-                new_value = safe_sample(normalized_audio)
-                print('new_value', new_value)
-                
-            except Exception as e:
-                self.report({'ERROR'}, f"Error: {str(e)}")
-                
-                
-        elif input_mapping.input_source == "CAMERA":
-            try:
-                cap = cv2.VideoCapture(0, cv2.CAP_AVFOUNDATION)
-                cv2.namedWindow("Webcam Brightness Tracker", cv2.WINDOW_NORMAL)
-                arr = []
-                
-                while True:
-                    ret, frame = cap.read()
-                    if not ret:
-                        print("failed to read frame.")
-                        break
+        audio_rig = context.scene.audio_rig
 
-                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                    brightness = np.mean(gray)
-                    arr.append(brightness)
+        layout.label(text="Microphone:")
+        layout.prop(audio_rig, "mic_list", text="")
+        layout.prop(audio_rig, "volume_scale")
+        layout.separator()
 
-                    cv2.putText(frame, f"Brightness: {brightness:.2f}", (10, 30),
-                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
-                    cv2.imshow("Webcam Brightness Tracker", frame)
-
-                    key = cv2.waitKey(1)
-                    if key == ord('q'):
-                        print("exiting")
-                        break
-                    
-            except Exception as e:
-                self.report({'ERROR'}, f"Error: {str(e)}")
-
-        if output_mapping.output_source == "COLOR":
-            color_channel = context.scene.color_channel
-            red = color_channel.channel_list[0]
-            green = color_channel.channel_list[1]
-            blue = color_channel.channel_list[2]
-            
-            print("old brush rgb", brush.color)
-            brush.color = change_rgb((red, green, blue), brush.color, new_value)
-            print("new brush rgb", brush.color)
-
-        elif output_mapping.output_source == "SIZE":
-            print("old brush size", brush.size)
-            brush.size = new_value
-            print("new brush size", brush.size)
-        
+        is_running = _audio_stream is not None and _audio_stream.active
+        if is_running:
+            layout.label(text=f"● Live  |  level: {_current_level:.2f}  |  size: {int(BRUSH_MIN + _smoothed_level * (BRUSH_MAX - BRUSH_MIN))}px")
+            layout.operator("brush.audio_stop", text="Stop", icon="PAUSE")
         else:
-            print('something went wrong', input_mapping, output_mapping)
-        
-        return {'FINISHED'}
-               
+            layout.operator("brush.audio_start", text="Start", icon="REC")
 
-##################
-# MAIN UI
-##################
+        layout.separator()
+        layout.label(text=f"Brush range: {BRUSH_MIN}px – {BRUSH_MAX}px")
+        layout.label(text="Smooth factor: 0.15 (edit in script)")
 
-class VIEW3D_PT_creative_constraints(bpy.types.Panel):  # class naming convention ‘CATEGORY_PT_name’
-
-    # where to add the panel in the UI
-    bl_space_type = "VIEW_3D"  # 3D Viewport area (find list of values here https://docs.blender.org/api/current/bpy_types_enum_items/space_type_items.html#rna-enum-space-type-items)
-    bl_region_type = "UI"  # Sidebar region (find list of values here https://docs.blender.org/api/current/bpy_types_enum_items/region_type_items.html#rna-enum-region-type-items)
-
-    bl_category = "Creative Constraints"  # found in the Sidebar
-    bl_label = "Input to Output Mapping"  # found at the top of the Panel
-
-    def draw(self, context): # function that defines layout
-        layout = self.layout
-        scene = context.scene
-        input_mapping = scene.input_mapping
-        output_mapping = scene.output_mapping
-        color_channel = scene.color_channel
-        audio_rig = scene.audio_rig
-        
-        layout.label(text="Select Input:")
-        layout.prop(input_mapping, "input_source", expand=True)
-        row = layout.row()
-        
-        if input_mapping.input_source == 'AUDIO':
-            layout.prop(audio_rig, "mic_list")
-            layout.prop(audio_rig, "volume_scale")
-            layout.prop(audio_rig, "recording_length")
-
-            
-        layout.label(text="Select Ouput:")
-        layout.prop(output_mapping, "output_source", expand=True)
-        row = layout.row()
-        
-        if output_mapping.output_source == 'COLOR':
-            row = layout.row()
-            row.label(text="Channels:")
-            # color_channel, "channel_list"
-            for idx in range(len(color_channel.channel_list)):
-                layout.prop(color_channel, "channel_list", index=idx, text=checkbox_names[idx])
-                
-                
-        row = layout.row()
-        layout.operator("brush.mapping_operator", text="Map")
-                  
-            
-        
+# -------------------------
+# Register
+# -------------------------
 classes = (
-    InputMappingSettings,
-    OutputMappingSettings,
     AudioRigSettings,
-    color_channel_settings,
-    BRUSH_MAPPING_OT,
-    VIEW3D_PT_creative_constraints,
+    BRUSH_AUDIO_START_OT,
+    BRUSH_AUDIO_STOP_OT,
+    VIEW3D_PT_audio_brush,
 )
-        
 
 def register():
+    print(">>> [5] registering classes")
     for cls in classes:
         bpy.utils.register_class(cls)
-    bpy.types.Scene.color_channel = bpy.props.PointerProperty(type= color_channel_settings) # this creates a variable that can be referenced
-    bpy.types.Scene.audio_rig = bpy.props.PointerProperty(type= AudioRigSettings)
-    bpy.types.Scene.input_mapping = bpy.props.PointerProperty(type=InputMappingSettings)
-    bpy.types.Scene.output_mapping = bpy.props.PointerProperty(type=OutputMappingSettings)
-
+    bpy.types.Scene.audio_rig = bpy.props.PointerProperty(type=AudioRigSettings)
+    print(">>> [6] done — open the 'Audio Brush' tab in the N-panel (press N in 3D viewport)")
 
 def unregister():
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
-    del bpy.types.Scene.input_mapping
-    del bpy.types.Scene.output_mapping
-    del bpy.types.Scene.color_channel
     del bpy.types.Scene.audio_rig
-
+    global _audio_stream
+    if _audio_stream:
+        _audio_stream.stop()
+        _audio_stream.close()
+        _audio_stream = None
 
 if __name__ == "__main__":
     register()

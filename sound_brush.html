@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sound Level Monitor</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400&display=swap');
+
+  :root {
+    --bg: #0e0e0e;
+    --surface: #161616;
+    --border: #242424;
+    --text: #e8e8e8;
+    --muted: #555;
+    --accent: #7fff6e;
+    --accent-dim: rgba(127,255,110,0.08);
+    --warn: #ffb347;
+    --danger: #ff4f4f;
+    --radius: 10px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 300;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 32px;
+    padding: 40px 24px;
+  }
+
+  header { text-align: center; }
+
+  header h1 {
+    font-family: 'DM Mono', monospace;
+    font-weight: 300;
+    font-size: 13px;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    text-transform: lowercase;
+  }
+
+  /* Status pill */
+  #status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 5px 14px;
+    border-radius: 100px;
+    border: 1px solid var(--border);
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    transition: border-color 0.3s, color 0.3s;
+  }
+  #status-pill.connected { border-color: rgba(127,255,110,0.3); color: var(--accent); }
+  #status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  #status-pill.connected #status-dot { animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* Stats row — three cards */
+  .stats {
+    display: flex;
+    gap: 12px;
+    width: min(520px, 100%);
+  }
+
+  .stat-card {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 16px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .stat-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: lowercase;
+  }
+
+  .stat-value {
+    font-family: 'DM Mono', monospace;
+    font-size: 28px;
+    font-weight: 300;
+    color: var(--accent);
+    line-height: 1;
+    transition: color 0.1s;
+  }
+
+  .stat-value.warn   { color: var(--warn); }
+  .stat-value.danger { color: var(--danger); }
+
+  .stat-unit {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+  }
+
+  /* Bar meter */
+  .meter-wrap { width: min(520px, 100%); }
+
+  .meter-track {
+    width: 100%;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  #meter-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width 0.05s linear, background 0.1s;
+  }
+  #meter-fill.warn   { background: var(--warn); }
+  #meter-fill.danger { background: var(--danger); }
+
+  .meter-labels {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 6px;
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+  }
+
+  /* Brush size track */
+  .brush-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    width: min(520px, 100%);
+  }
+
+  .brush-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    white-space: nowrap;
+    width: 64px;
+  }
+
+  .brush-track {
+    flex: 1;
+    height: 2px;
+    background: var(--border);
+    border-radius: 1px;
+    position: relative;
+  }
+
+  #brush-dot {
+    position: absolute;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    background: var(--accent);
+    border-radius: 50%;
+    left: 0%;
+    width: 8px;
+    height: 8px;
+    transition: left 0.05s linear, width 0.05s, height 0.05s;
+  }
+
+  /* Sparkline */
+  .sparkline-wrap { width: min(520px, 100%); }
+  .sparkline-wrap p {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  canvas#sparkline { width: 100%; height: 64px; display: block; }
+
+  footer {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--border);
+    text-align: center;
+    line-height: 1.8;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>blender audio monitor</h1>
+  <div id="status-pill">
+    <span id="status-dot"></span>
+    <span id="status-text">connecting…</span>
+  </div>
+</header>
+
+<!-- Three stat cards -->
+<div class="stats">
+  <div class="stat-card">
+    <span class="stat-label">sound level</span>
+    <span class="stat-value" id="val-level">0.00</span>
+    <span class="stat-unit">0 – 1</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-label">brush size</span>
+    <span class="stat-value" id="val-brush">1</span>
+    <span class="stat-unit">px</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-label">sensitivity</span>
+    <span class="stat-value" id="val-sens">1.0</span>
+    <span class="stat-unit">multiplier</span>
+  </div>
+</div>
+
+<!-- Level bar -->
+<div class="meter-wrap">
+  <div class="meter-track">
+    <div id="meter-fill"></div>
+  </div>
+  <div class="meter-labels">
+    <span>silent</span>
+    <span>loud</span>
+  </div>
+</div>
+
+<!-- Brush size position on track -->
+<div class="brush-row">
+  <span class="brush-label">brush pos</span>
+  <div class="brush-track">
+    <div id="brush-dot"></div>
+  </div>
+</div>
+
+<!-- Sparkline history -->
+<div class="sparkline-wrap">
+  <p>level history (last 120 samples)</p>
+  <canvas id="sparkline" width="520" height="64"></canvas>
+</div>
+
+<footer>
+  connects to blender_server.py · localhost:8000
+</footer>
+
+<script>
+  const BRUSH_MIN = 1;
+  const BRUSH_MAX = 200;
+  const HISTORY_LEN = 120;
+
+  const valLevel = document.getElementById('val-level');
+  const valBrush = document.getElementById('val-brush');
+  const valSens  = document.getElementById('val-sens');
+  const fill     = document.getElementById('meter-fill');
+  const brushDot = document.getElementById('brush-dot');
+  const pill     = document.getElementById('status-pill');
+  const statusTx = document.getElementById('status-text');
+  const canvas   = document.getElementById('sparkline');
+  const ctx      = canvas.getContext('2d');
+
+  let history = new Array(HISTORY_LEN).fill(0);
+
+  function resizeCanvas() {
+    canvas.width  = canvas.offsetWidth  * devicePixelRatio;
+    canvas.height = canvas.offsetHeight * devicePixelRatio;
+    ctx.scale(devicePixelRatio, devicePixelRatio);
+  }
+  resizeCanvas();
+  window.addEventListener('resize', resizeCanvas);
+
+  function colorClass(el, level) {
+    el.classList.toggle('warn',   level >= 0.7 && level < 0.9);
+    el.classList.toggle('danger', level >= 0.9);
+  }
+
+  function updateUI(level, brushSize, sensitivity) {
+    // Cards
+    valLevel.textContent = level.toFixed(2);
+    valBrush.textContent = brushSize;
+    valSens.textContent  = sensitivity.toFixed(1);
+    colorClass(valLevel, level);
+
+    // Bar
+    fill.style.width = (level * 100) + '%';
+    colorClass(fill, level);
+
+    // Brush dot position and size
+    const pct = ((brushSize - BRUSH_MIN) / (BRUSH_MAX - BRUSH_MIN)) * 100;
+    brushDot.style.left = pct + '%';
+    const dotSize = 6 + level * 10;
+    brushDot.style.width  = dotSize + 'px';
+    brushDot.style.height = dotSize + 'px';
+
+    // Sparkline
+    history.push(level);
+    if (history.length > HISTORY_LEN) history.shift();
+    drawSparkline();
+  }
+
+  function drawSparkline() {
+    const w = canvas.offsetWidth;
+    const h = canvas.offsetHeight;
+    ctx.clearRect(0, 0, w, h);
+    const step = w / (HISTORY_LEN - 1);
+
+    ctx.beginPath();
+    ctx.strokeStyle = '#7fff6e';
+    ctx.lineWidth = 1.5;
+    ctx.lineJoin = 'round';
+    history.forEach((v, i) => {
+      const x = i * step;
+      const y = h - v * (h - 4) - 2;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Fill under
+    ctx.lineTo((HISTORY_LEN - 1) * step, h);
+    ctx.lineTo(0, h);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(127,255,110,0.05)';
+    ctx.fill();
+  }
+
+  function setStatus(connected, text) {
+    pill.className = connected ? 'connected' : '';
+    statusTx.textContent = text;
+  }
+
+  async function connect() {
+    setStatus(false, 'fetching port…');
+    let wsPort;
+    try {
+      const res = await fetch('http://localhost:8000');
+      const data = await res.json();
+      wsPort = data.port;
+    } catch (e) {
+      setStatus(false, 'blender not found — retrying');
+      setTimeout(connect, 3000);
+      return;
+    }
+
+    setStatus(false, `connecting to :${wsPort}…`);
+    const ws = new WebSocket(`ws://localhost:${wsPort}`);
+
+    ws.onopen = () => setStatus(true, `live · :${wsPort}`);
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'level') {
+          updateUI(
+            msg.level      ?? 0,
+            msg.brush_size ?? 1,
+            msg.sensitivity ?? 1.0
+          );
+        }
+      } catch (_) {}
+    };
+
+    ws.onclose = () => {
+      setStatus(false, 'disconnected — retrying');
+      setTimeout(connect, 3000);
+    };
+
+    ws.onerror = () => ws.close();
+  }
+
+  connect();
+</script>
+</body>
+</html>
