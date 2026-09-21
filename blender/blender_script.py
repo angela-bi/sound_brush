@@ -3,7 +3,33 @@ import sys
 import json
 import asyncio
 
-# add project folder so blender_server can be imported as a real module
+
+sys.path.append("/Users/angelabi/.local/lib/python3.11/site-packages")
+
+import sounddevice as sd
+import numpy as np
+print(sd.query_devices())
+
+# -------------------------
+# Single settings dict — shared across all functions
+# -------------------------
+SETTINGS = {
+    "brush_min":    1,
+    "brush_max":    200,
+    "smooth_factor": 0.15,
+}
+
+# -------------------------
+# Globals
+# -------------------------
+_audio_stream = None
+_current_level = 0.0
+_smoothed_level = 0.0
+
+
+# -------------------------
+# Import and start server
+# -------------------------
 SERVER_DIR = "/Users/angelabi/UIUC/sound_brush/blender"
 if SERVER_DIR not in sys.path:
     sys.path.append(SERVER_DIR)
@@ -14,28 +40,6 @@ if _server._loop is None:
     print(">>> server started")
 else:
     print(">>> server already running")
-
-print(">>> [1] basic imports done")
-
-sys.path.append("/Users/angelabi/.local/lib/python3.11/site-packages")
-print(">>> [2] sys.path updated")
-
-import sounddevice as sd
-import numpy as np
-print(">>> [3] sounddevice and numpy imported")
-print(sd.query_devices())
-
-# -------------------------
-# Globals
-# -------------------------
-_audio_stream = None
-_current_level = 0.0
-BRUSH_MIN = 1
-BRUSH_MAX = 200
-_smoothed_level = 0.0
-SMOOTH_FACTOR = 0.15
-
-print(">>> [4] globals set")
 
 # -------------------------
 # Helpers
@@ -55,32 +59,84 @@ def normalize_rms(audio_block, scale=1.0):
 def lerp(a, b, t):
     return a + (b - a) * t
 
+def get_sensitivity():
+    if hasattr(bpy.context.scene, "audio_rig"):
+        return float(bpy.context.scene.audio_rig.volume_scale)
+    return 1.0
+
 def broadcast_level(level: float):
-    """Look up blender_server from sys.modules — never import it directly."""
     try:
-        server = sys.modules.get("blender_server")
-        if server is None:
-            print(">>> broadcast skipped: blender_server not in sys.modules (run it first)")
-            return
-        if not server._clients:
-            print(">>> broadcast skipped: no browser clients connected")
-            return
-        if server._loop is None:
-            print(">>> broadcast skipped: server loop is None")
+        if not _server._clients or _server._loop is None:
             return
         brush = bpy.data.brushes.get("Pencil")
         brush_size = brush.size if brush else 0
-        scale = bpy.context.scene.audio_rig.volume_scale if hasattr(bpy.context.scene, "audio_rig") else 1.0
         payload = json.dumps({
-            "type": "level",
-            "level": round(level, 4),
-            "brush_size": brush_size,
-            "sensitivity": round(float(scale), 2)
+            "type":         "level",
+            "level":        round(level, 4),
+            "brush_size":   brush_size,
+            "sensitivity":  round(get_sensitivity(), 2),
+            "smooth_factor": round(SETTINGS["smooth_factor"], 3),
+            "brush_min":    SETTINGS["brush_min"],
+            "brush_max":    SETTINGS["brush_max"],
         })
-        asyncio.run_coroutine_threadsafe(server._broadcast(payload), server._loop)
-        print(f">>> broadcast sent: level={round(level,4)} brush={brush_size}px")
+        asyncio.run_coroutine_threadsafe(_server._broadcast(payload), _server._loop)
     except Exception as e:
         print(f">>> Broadcast error: {e}")
+
+# -------------------------
+# Incoming message handler
+# -------------------------
+def handle_browser_message(message: str):
+    """Runs on Blender's main thread via job queue."""
+    try:
+        data = json.loads(message)
+        msg_type = data.get("type")
+        print(f">>> handling message: {data}")
+
+        if msg_type == "set_smooth":
+            SETTINGS["smooth_factor"] = max(0.01, min(1.0, float(data["value"])))
+            print(f">>> smooth factor → {SETTINGS['smooth_factor']}")
+
+        elif msg_type == "set_brush_min":
+            SETTINGS["brush_min"] = max(1, int(float(data["value"])))
+            print(f">>> brush min → {SETTINGS['brush_min']}")
+
+        elif msg_type == "set_brush_max":
+            SETTINGS["brush_max"] = min(500, int(float(data["value"])))
+            print(f">>> brush max → {SETTINGS['brush_max']}")
+
+        elif msg_type == "set_sensitivity":
+            if hasattr(bpy.context.scene, "audio_rig"):
+                val = max(0.1, min(10.0, float(data["value"])))
+                bpy.context.scene.audio_rig.volume_scale = val
+                print(f">>> sensitivity → {val}")
+
+        else:
+            print(f">>> unknown message type: {msg_type}")
+
+    except Exception as e:
+        print(f">>> handle_browser_message error: {e}")
+
+# -------------------------
+# Patch server echo
+# -------------------------
+async def _patched_echo(websocket):
+    print(f">>> client connected: {websocket.remote_address}")
+    _server._clients.add(websocket)
+    try:
+        _server._job_queue.put(_server.send_grease_pencil_layers)
+        _server._job_queue.put(_server.send_brush_info)
+        async for message in websocket:
+            print(f">>> received from browser: {message}")
+            _server._job_queue.put(lambda m=message: handle_browser_message(m))
+    except Exception as e:
+        print(f">>> client error: {e}")
+    finally:
+        _server._clients.discard(websocket)
+        print(f">>> client disconnected, remaining: {len(_server._clients)}")
+
+_server.echo = _patched_echo
+print(">>> echo handler patched")
 
 # -------------------------
 # Audio callback (background thread)
@@ -89,9 +145,8 @@ def audio_callback(indata, frames, time, status):
     global _current_level
     if status:
         print(f">>> audio status warning: {status}")
-    scene = bpy.context.scene
-    scale = scene.audio_rig.volume_scale if hasattr(scene, "audio_rig") else 1.0
-    _current_level = normalize_rms(indata, scale=float(scale) * 10)
+    scale = get_sensitivity()
+    _current_level = normalize_rms(indata, scale=scale * 10)
 
 # -------------------------
 # Blender timer (main thread)
@@ -103,13 +158,16 @@ def update_brush_from_audio():
         print(">>> timer: stream gone, stopping")
         return None
 
-    _smoothed_level = lerp(_smoothed_level, _current_level, SMOOTH_FACTOR)
-    new_size = int(BRUSH_MIN + _smoothed_level * (BRUSH_MAX - BRUSH_MIN))
+    smooth   = SETTINGS["smooth_factor"]
+    bmin     = SETTINGS["brush_min"]
+    bmax     = SETTINGS["brush_max"]
+
+    _smoothed_level = lerp(_smoothed_level, _current_level, smooth)
+    new_size = int(bmin + _smoothed_level * (bmax - bmin))
 
     brush = bpy.data.brushes.get("Pencil")
     if brush:
         brush.size = new_size
-        print(f">>> brush size set to {new_size}px (level={_current_level:.3f})")
     else:
         print(">>> WARNING: brush 'Pencil' not found — check your brush name!")
 
@@ -214,14 +272,17 @@ class VIEW3D_PT_audio_brush(bpy.types.Panel):
 
         is_running = _audio_stream is not None and _audio_stream.active
         if is_running:
-            layout.label(text=f"● Live  |  level: {_current_level:.2f}  |  size: {int(BRUSH_MIN + _smoothed_level * (BRUSH_MAX - BRUSH_MIN))}px")
+            bmin = SETTINGS["brush_min"]
+            bmax = SETTINGS["brush_max"]
+            size = int(bmin + _smoothed_level * (bmax - bmin))
+            layout.label(text=f"● Live  |  level: {_current_level:.2f}  |  size: {size}px")
             layout.operator("brush.audio_stop", text="Stop", icon="PAUSE")
         else:
             layout.operator("brush.audio_start", text="Start", icon="REC")
 
         layout.separator()
-        layout.label(text=f"Brush range: {BRUSH_MIN}px – {BRUSH_MAX}px")
-        layout.label(text="Smooth factor: 0.15 (edit in script)")
+        layout.label(text=f"Brush range: {SETTINGS['brush_min']}px – {SETTINGS['brush_max']}px")
+        layout.label(text=f"Smooth factor: {SETTINGS['smooth_factor']}")
 
 # -------------------------
 # Register
@@ -234,11 +295,9 @@ classes = (
 )
 
 def register():
-    print(">>> [5] registering classes")
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Scene.audio_rig = bpy.props.PointerProperty(type=AudioRigSettings)
-    print(">>> [6] done — open the 'Audio Brush' tab in the N-panel (press N in 3D viewport)")
 
 def unregister():
     for cls in reversed(classes):

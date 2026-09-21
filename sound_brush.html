@@ -10,11 +10,11 @@
   :root {
     --bg: #0e0e0e;
     --surface: #161616;
+    --surface2: #1c1c1c;
     --border: #242424;
     --text: #e8e8e8;
     --muted: #555;
     --accent: #7fff6e;
-    --accent-dim: rgba(127,255,110,0.08);
     --warn: #ffb347;
     --danger: #ff4f4f;
     --radius: 10px;
@@ -32,7 +32,7 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 32px;
+    gap: 28px;
     padding: 40px 24px;
   }
 
@@ -47,7 +47,6 @@
     text-transform: lowercase;
   }
 
-  /* Status pill */
   #status-pill {
     display: inline-flex;
     align-items: center;
@@ -66,11 +65,11 @@
   #status-pill.connected #status-dot { animation: pulse 1.4s ease-in-out infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
 
-  /* Stats row — three cards */
+  /* Stat cards */
   .stats {
     display: flex;
-    gap: 12px;
-    width: min(520px, 100%);
+    gap: 10px;
+    width: min(540px, 100%);
   }
 
   .stat-card {
@@ -78,113 +77,131 @@
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 18px 16px 14px;
+    padding: 16px 14px 12px;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
   }
 
   .stat-label {
     font-family: 'DM Mono', monospace;
     font-size: 10px;
     color: var(--muted);
-    letter-spacing: 0.08em;
-    text-transform: lowercase;
+    letter-spacing: 0.06em;
   }
 
   .stat-value {
     font-family: 'DM Mono', monospace;
-    font-size: 28px;
+    font-size: 26px;
     font-weight: 300;
     color: var(--accent);
     line-height: 1;
     transition: color 0.1s;
   }
-
   .stat-value.warn   { color: var(--warn); }
   .stat-value.danger { color: var(--danger); }
-
-  .stat-unit {
-    font-family: 'DM Mono', monospace;
-    font-size: 10px;
-    color: var(--muted);
-  }
+  .stat-unit { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); }
 
   /* Bar meter */
-  .meter-wrap { width: min(520px, 100%); }
-
-  .meter-track {
-    width: 100%;
-    height: 4px;
-    background: var(--border);
-    border-radius: 2px;
-    overflow: hidden;
-  }
-
-  #meter-fill {
-    height: 100%;
-    width: 0%;
-    background: var(--accent);
-    border-radius: 2px;
-    transition: width 0.05s linear, background 0.1s;
-  }
+  .meter-wrap { width: min(540px, 100%); }
+  .meter-track { width: 100%; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  #meter-fill { height: 100%; width: 0%; background: var(--accent); border-radius: 2px; transition: width 0.05s linear, background 0.1s; }
   #meter-fill.warn   { background: var(--warn); }
   #meter-fill.danger { background: var(--danger); }
-
-  .meter-labels {
-    display: flex;
-    justify-content: space-between;
-    margin-top: 6px;
-    font-family: 'DM Mono', monospace;
-    font-size: 10px;
-    color: var(--muted);
-  }
-
-  /* Brush size track */
-  .brush-row {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    width: min(520px, 100%);
-  }
-
-  .brush-label {
-    font-family: 'DM Mono', monospace;
-    font-size: 10px;
-    color: var(--muted);
-    white-space: nowrap;
-    width: 64px;
-  }
-
-  .brush-track {
-    flex: 1;
-    height: 2px;
-    background: var(--border);
-    border-radius: 1px;
-    position: relative;
-  }
-
-  #brush-dot {
-    position: absolute;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    background: var(--accent);
-    border-radius: 50%;
-    left: 0%;
-    width: 8px;
-    height: 8px;
-    transition: left 0.05s linear, width 0.05s, height 0.05s;
-  }
+  .meter-labels { display: flex; justify-content: space-between; margin-top: 6px; font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); }
 
   /* Sparkline */
-  .sparkline-wrap { width: min(520px, 100%); }
-  .sparkline-wrap p {
+  .sparkline-wrap { width: min(540px, 100%); }
+  .sparkline-wrap p { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); margin-bottom: 8px; }
+  canvas#sparkline { width: 100%; height: 60px; display: block; }
+
+  /* Controls */
+  .controls {
+    width: min(540px, 100%);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .controls-title {
     font-family: 'DM Mono', monospace;
     font-size: 10px;
     color: var(--muted);
-    margin-bottom: 8px;
+    letter-spacing: 0.08em;
+    text-transform: lowercase;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
   }
-  canvas#sparkline { width: 100%; height: 64px; display: block; }
+
+  .control-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .control-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--text);
+    width: 110px;
+    flex-shrink: 0;
+  }
+
+  .control-label span {
+    display: block;
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  input[type="range"] {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    transition: transform 0.1s;
+  }
+
+  input[type="range"]::-webkit-slider-thumb:hover {
+    transform: scale(1.3);
+  }
+
+  .control-val {
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    color: var(--accent);
+    width: 40px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  /* Brush min/max row — two sliders */
+  .control-row-double {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .control-row-double .control-label {
+    width: auto;
+  }
 
   footer {
     font-family: 'DM Mono', monospace;
@@ -205,7 +222,7 @@
   </div>
 </header>
 
-<!-- Three stat cards -->
+<!-- Stat cards -->
 <div class="stats">
   <div class="stat-card">
     <span class="stat-label">sound level</span>
@@ -220,33 +237,62 @@
   <div class="stat-card">
     <span class="stat-label">sensitivity</span>
     <span class="stat-value" id="val-sens">1.0</span>
-    <span class="stat-unit">multiplier</span>
+    <span class="stat-unit">×</span>
   </div>
 </div>
 
 <!-- Level bar -->
 <div class="meter-wrap">
-  <div class="meter-track">
-    <div id="meter-fill"></div>
-  </div>
-  <div class="meter-labels">
-    <span>silent</span>
-    <span>loud</span>
-  </div>
+  <div class="meter-track"><div id="meter-fill"></div></div>
+  <div class="meter-labels"><span>silent</span><span>loud</span></div>
 </div>
 
-<!-- Brush size position on track -->
-<div class="brush-row">
-  <span class="brush-label">brush pos</span>
-  <div class="brush-track">
-    <div id="brush-dot"></div>
-  </div>
-</div>
-
-<!-- Sparkline history -->
+<!-- Sparkline -->
 <div class="sparkline-wrap">
   <p>level history (last 120 samples)</p>
-  <canvas id="sparkline" width="520" height="64"></canvas>
+  <canvas id="sparkline" width="540" height="60"></canvas>
+</div>
+
+<!-- Controls -->
+<div class="controls">
+  <div class="controls-title">controls → blender</div>
+
+  <div class="control-row">
+    <div class="control-label">
+      sensitivity
+      <span>mic amplification</span>
+    </div>
+    <input type="range" id="ctrl-sensitivity" min="0.1" max="10" step="0.1" value="1.0">
+    <span class="control-val" id="disp-sensitivity">1.0</span>
+  </div>
+
+  <div class="control-row">
+    <div class="control-label">
+      smooth factor
+      <span>lower = jitterier</span>
+    </div>
+    <input type="range" id="ctrl-smooth" min="0.01" max="1" step="0.01" value="0.15">
+    <span class="control-val" id="disp-smooth">0.15</span>
+  </div>
+
+  <div class="control-row">
+    <div class="control-label">
+      brush min
+      <span>quietest size</span>
+    </div>
+    <input type="range" id="ctrl-brush-min" min="1" max="100" step="1" value="1">
+    <span class="control-val" id="disp-brush-min">1px</span>
+  </div>
+
+  <div class="control-row">
+    <div class="control-label">
+      brush max
+      <span>loudest size</span>
+    </div>
+    <input type="range" id="ctrl-brush-max" min="10" max="500" step="1" value="200">
+    <span class="control-val" id="disp-brush-max">200px</span>
+  </div>
+
 </div>
 
 <footer>
@@ -254,21 +300,19 @@
 </footer>
 
 <script>
-  const BRUSH_MIN = 1;
-  const BRUSH_MAX = 200;
   const HISTORY_LEN = 120;
 
   const valLevel = document.getElementById('val-level');
   const valBrush = document.getElementById('val-brush');
   const valSens  = document.getElementById('val-sens');
   const fill     = document.getElementById('meter-fill');
-  const brushDot = document.getElementById('brush-dot');
   const pill     = document.getElementById('status-pill');
   const statusTx = document.getElementById('status-text');
   const canvas   = document.getElementById('sparkline');
   const ctx      = canvas.getContext('2d');
 
   let history = new Array(HISTORY_LEN).fill(0);
+  let ws = null;
 
   function resizeCanvas() {
     canvas.width  = canvas.offsetWidth  * devicePixelRatio;
@@ -283,28 +327,46 @@
     el.classList.toggle('danger', level >= 0.9);
   }
 
-  function updateUI(level, brushSize, sensitivity) {
-    // Cards
+  let _slidersInitialized = false;
+
+  function updateUI(msg) {
+    const level = msg.level ?? 0;
+    const brushSize = msg.brush_size ?? 1;
+    const sensitivity = msg.sensitivity ?? 1.0;
+
     valLevel.textContent = level.toFixed(2);
     valBrush.textContent = brushSize;
     valSens.textContent  = sensitivity.toFixed(1);
     colorClass(valLevel, level);
 
-    // Bar
     fill.style.width = (level * 100) + '%';
     colorClass(fill, level);
 
-    // Brush dot position and size
-    const pct = ((brushSize - BRUSH_MIN) / (BRUSH_MAX - BRUSH_MIN)) * 100;
-    brushDot.style.left = pct + '%';
-    const dotSize = 6 + level * 10;
-    brushDot.style.width  = dotSize + 'px';
-    brushDot.style.height = dotSize + 'px';
+    // Only sync sliders once on first connect, not on every update
+    if (!_slidersInitialized) {
+      syncSlider('ctrl-sensitivity', 'disp-sensitivity', sensitivity, v => v.toFixed(1));
+      syncSlider('ctrl-smooth',      'disp-smooth',      msg.smooth_factor ?? 0.15, v => v.toFixed(2));
+      syncSlider('ctrl-brush-min',   'disp-brush-min',   msg.brush_min ?? 1,  v => v + 'px');
+      syncSlider('ctrl-brush-max',   'disp-brush-max',   msg.brush_max ?? 200, v => v + 'px');
+      _slidersInitialized = true;
+    }
 
-    // Sparkline
     history.push(level);
     if (history.length > HISTORY_LEN) history.shift();
     drawSparkline();
+  }
+
+  // Update slider display without triggering the input event
+  let _suppressSync = false;
+  function syncSlider(sliderId, dispId, value, fmt) {
+    const slider = document.getElementById(sliderId);
+    const disp   = document.getElementById(dispId);
+    if (Math.abs(parseFloat(slider.value) - value) > 0.001) {
+      _suppressSync = true;
+      slider.value = value;
+      _suppressSync = false;
+    }
+    disp.textContent = fmt(value);
   }
 
   function drawSparkline() {
@@ -324,7 +386,6 @@
     });
     ctx.stroke();
 
-    // Fill under
     ctx.lineTo((HISTORY_LEN - 1) * step, h);
     ctx.lineTo(0, h);
     ctx.closePath();
@@ -332,6 +393,34 @@
     ctx.fill();
   }
 
+  // Send a control value to Blender
+  function send(obj) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      console.log("sending to blender:", obj);
+      ws.send(JSON.stringify(obj));
+    } else {
+      console.warn("ws not open, can't send");
+    }
+  }
+
+  // Wire up sliders
+  function wireSlider(sliderId, dispId, msgType, fmt) {
+    const slider = document.getElementById(sliderId);
+    const disp   = document.getElementById(dispId);
+    slider.addEventListener('input', () => {
+      if (_suppressSync) return;
+      const val = parseFloat(slider.value);
+      disp.textContent = fmt(val);
+      send({ type: msgType, value: val });
+    });
+  }
+
+  wireSlider('ctrl-sensitivity', 'disp-sensitivity', 'set_sensitivity', v => v.toFixed(1));
+  wireSlider('ctrl-smooth',      'disp-smooth',      'set_smooth',      v => v.toFixed(2));
+  wireSlider('ctrl-brush-min',   'disp-brush-min',   'set_brush_min',   v => Math.round(v) + 'px');
+  wireSlider('ctrl-brush-max',   'disp-brush-max',   'set_brush_max',   v => Math.round(v) + 'px');
+
+  // Connection
   function setStatus(connected, text) {
     pill.className = connected ? 'connected' : '';
     statusTx.textContent = text;
@@ -351,25 +440,20 @@
     }
 
     setStatus(false, `connecting to :${wsPort}…`);
-    const ws = new WebSocket(`ws://localhost:${wsPort}`);
+    ws = new WebSocket(`ws://localhost:${wsPort}`);
 
     ws.onopen = () => setStatus(true, `live · :${wsPort}`);
 
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
-        if (msg.type === 'level') {
-          updateUI(
-            msg.level      ?? 0,
-            msg.brush_size ?? 1,
-            msg.sensitivity ?? 1.0
-          );
-        }
+        if (msg.type === 'level') updateUI(msg);
       } catch (_) {}
     };
 
     ws.onclose = () => {
       setStatus(false, 'disconnected — retrying');
+      _slidersInitialized = false;
       setTimeout(connect, 3000);
     };
 
